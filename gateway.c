@@ -30,6 +30,7 @@
 #include "network.h"
 #include "global.h"
 #include "server.h"
+#include "cmp/cmp.h"
 
 bool run = TRUE;
 
@@ -130,6 +131,9 @@ const char Hex[16] = "0123456789ABCDEF";
 
 int LEDCounts[2];
 pthread_mutex_t var=PTHREAD_MUTEX_INITIALIZER;
+
+int hb_buf_ptr = 0;
+int hb_ptr_max = 20;
 
 #pragma pack(1)
 
@@ -642,6 +646,177 @@ void ProcessLine(int Channel, char *Line)
 	// HAB->HAB_status = FieldCount == 6;
 }
 
+
+static bool file_reader(cmp_ctx_t *ctx, void *data, size_t limit) {
+	if (hb_buf_ptr + limit >= hb_ptr_max)
+    	return 0;
+	uint32_t i = 0;
+	for(i = 0; i < limit; i++){
+		*(uint8_t *)data = ((uint8_t *)(ctx->buf))[hb_buf_ptr];
+		data++;
+		hb_buf_ptr++;
+	}
+
+	//data = ctx->buf+hb_buf_ptr;
+	//hb_buf_ptr += limit;
+	return 1;
+	//return read_bytes(data, limit, (FILE *)ctx->buf);
+}
+
+static size_t file_writer(cmp_ctx_t *ctx, const void *data, size_t count) {
+
+	uint16_t i;
+	//if (hb_buf_ptr+count > HB_BUF_LEN)
+	//	return -1;
+
+	for (i = 0; i < count; i++)
+	{
+		((char*)ctx->buf)[hb_buf_ptr] = *((uint8_t*)data);
+		data++;
+		hb_buf_ptr++;
+	}
+	return count;
+    //return fwrite(data, sizeof(uint8_t), count, (FILE *)ctx->buf);
+}
+
+int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int limit_out);
+{
+	
+	cmp_ctx_t cmp;
+	uint32_t map_size;
+	int i,j;
+	
+	uint64_t tu64;
+	int64_t ts64;
+	
+	//When converting habpack to $$uhkas, the habpack fields should be ordered.
+	//This stores the output prior to reordering
+	char temp[1024];
+	int temp_ptr = 0;
+	int temp_remaining;
+	
+	int out_ptr = 0;
+	
+	uint8_t keys[128];
+	uint16_t key_val[128];
+	uint8_t key_ptr = 0;
+	
+	cmp_init(&cmp, (void*)Message, file_reader, file_writer);
+
+	hb_buf_ptr = 0;
+	hb_ptr_max = limit_in;
+	
+	
+	if (!cmp_read_map(&cmp, &map_size))
+	    return temp_ptr;
+	
+	for (i=0; i < map_size; i++)
+	{
+		//first read the ID
+		if (!(cmp_read_uinteger(&cmp, &map_id)))
+			return temp_ptr;
+		
+		switch(map_id){
+			case 0: //callsign
+				key_val[key_ptr] = temp_ptr;				
+				keys[key_ptr++] = 0;
+			
+				temp_remaining = 1024-temp_ptr;
+				if (!cmp_read_str(&cmp, &temp[temp_ptr], (uint32_t *)(&temp_remaining)))
+				    return temp_ptr;
+				while(temp[temp_ptr])
+					temp_ptr++;
+				temp_ptr++;
+				
+				break;
+			case 1: //count
+				key_val[key_ptr] = temp_ptr;
+				keys[key_ptr++] = 1;
+				
+				if (!(cmp_read_uinteger(&cmp, &tu64)))
+					return temp_ptr;
+				temp_remaining = 1024-temp_ptr;
+				temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%lu",tu);
+				
+				break;
+			case 2:
+				key_val[key_ptr] = temp_ptr;			
+				keys[key_ptr++] = 2;	
+				
+				if (!(cmp_read_uinteger(&cmp, &tu64)))
+					return temp_ptr;
+				int hours = tu64/(60*60);
+				tu64 = tu64 - (hours*60*60);
+				int mins = (tu64/60);
+				int secs = tu64-mins*60;
+				temp_remaining = 1024-temp_ptr;
+				temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%02d:%02d:%02d",hours,mins,secs);	
+							
+				break;
+			case 3: //position
+				key_val[key_ptr] = temp_ptr;
+				keys[key_ptr++] = 3;
+				
+				if (!cmp_read_array(&cmp, &array_size))
+					return temp_ptr;
+				if (array_size != 3)
+					return temp_ptr;
+				if (!(cmp_read_sinteger(&cmp, &ts64)))
+					return temp_ptr;
+				temp_remaining = 1024-temp_ptr;
+				temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%ld,",ts64);									
+				
+				if (!(cmp_read_sinteger(&cmp, &ts64)))
+					return out;
+				temp_remaining = 1024-temp_ptr;
+				temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%ld,",ts64);
+
+				if (!(cmp_read_sinteger(&cmp, &ts64)))
+					return out;
+				temp_remaining = 1024-temp_ptr;
+				temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%ld",ts64);
+				
+				break;
+			default:
+				/*if (item.isIntegerValue()){        							
+					//raw_string = raw_string + packetID + ",";
+					telemmap.put(new Integer(s.asIntegerValue().intValue()),
+							Integer.toString(item.asIntegerValue().getInt()));
+				}
+				else
+				{
+					//TODO: more here
+				}*/
+				break;
+		}
+	}
+	
+	if (key_ptr == 0)
+		return 0;
+	
+	out_ptr += snprintf(Message_out,limit_out,"$$");
+	
+	//now order the items into the output string
+	
+	int copy_ptr = 0;
+	
+	for (i=0; i < 128; i++) {
+		for (j=0; j < key_ptr; j++) {
+			if (keys[j] == i){
+				copy_ptr = key_val[j];
+				while((out_ptr < limit_out-1) && (temp[copy_ptr])){
+					Message_out[out_ptr++] = temp[copy_ptr++];
+				}
+				Message_out[out_ptr++] = ',';
+			}
+		}
+	}
+	Message_out[out_ptr-1] = '*';
+	
+	//add checksum to keep everything happy
+	
+}
+
 			
 void ProcessTelemetryMessage(int Channel, char *Message)
 {
@@ -1054,6 +1229,13 @@ void DIO0_Interrupt(int Channel)
 			{
 				ProcessTelemetryMessage(Channel, Message+1);
 				TestMessageForSMSAcknowledgement(Channel, Message+1);
+			}
+			else if ( ((Message[1] & 0xF0) == 0x80) || (Message[1]  == 0xde))
+			{
+				unsigned char MessageOut[1024];
+				ProcessHabpackMessage(Message,MessageOut,1024);
+				ProcessTelemetryMessage(Channel, MessageOut+1);
+				TestMessageForSMSAcknowledgement(Channel, MessageOut+1);
 			}
 			else if (Message[1] == 0x66)
 			{
