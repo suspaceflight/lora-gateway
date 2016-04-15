@@ -679,15 +679,17 @@ static size_t file_writer(cmp_ctx_t *ctx, const void *data, size_t count) {
     //return fwrite(data, sizeof(uint8_t), count, (FILE *)ctx->buf);
 }
 
-int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int limit_out);
+int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int limit_out)
 {
 	
 	cmp_ctx_t cmp;
 	uint32_t map_size;
+	uint32_t array_size;
 	int i,j;
 	
 	uint64_t tu64;
 	int64_t ts64;
+	uint64_t map_id;
 	
 	//When converting habpack to $$uhkas, the habpack fields should be ordered.
 	//This stores the output prior to reordering
@@ -708,13 +710,13 @@ int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int lim
 	
 	
 	if (!cmp_read_map(&cmp, &map_size))
-	    return temp_ptr;
+	    return 0;
 	
 	for (i=0; i < map_size; i++)
 	{
 		//first read the ID
 		if (!(cmp_read_uinteger(&cmp, &map_id)))
-			return temp_ptr;
+			return 0;
 		
 		switch(map_id){
 			case 0: //callsign
@@ -723,7 +725,7 @@ int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int lim
 			
 				temp_remaining = 1024-temp_ptr;
 				if (!cmp_read_str(&cmp, &temp[temp_ptr], (uint32_t *)(&temp_remaining)))
-				    return temp_ptr;
+				    return 0;
 				while(temp[temp_ptr])
 					temp_ptr++;
 				temp_ptr++;
@@ -734,9 +736,9 @@ int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int lim
 				keys[key_ptr++] = 1;
 				
 				if (!(cmp_read_uinteger(&cmp, &tu64)))
-					return temp_ptr;
+					return 0;
 				temp_remaining = 1024-temp_ptr;
-				temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%lu",tu);
+				temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%lu",tu64);
 				
 				break;
 			case 2:
@@ -744,7 +746,7 @@ int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int lim
 				keys[key_ptr++] = 2;	
 				
 				if (!(cmp_read_uinteger(&cmp, &tu64)))
-					return temp_ptr;
+					return 0;
 				int hours = tu64/(60*60);
 				tu64 = tu64 - (hours*60*60);
 				int mins = (tu64/60);
@@ -758,21 +760,21 @@ int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int lim
 				keys[key_ptr++] = 3;
 				
 				if (!cmp_read_array(&cmp, &array_size))
-					return temp_ptr;
+					return 0;
 				if (array_size != 3)
-					return temp_ptr;
+					return 0;
 				if (!(cmp_read_sinteger(&cmp, &ts64)))
-					return temp_ptr;
+					return 0;
 				temp_remaining = 1024-temp_ptr;
 				temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%ld,",ts64);									
 				
 				if (!(cmp_read_sinteger(&cmp, &ts64)))
-					return out;
+					return 0;
 				temp_remaining = 1024-temp_ptr;
 				temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%ld,",ts64);
 
 				if (!(cmp_read_sinteger(&cmp, &ts64)))
-					return out;
+					return 0;
 				temp_remaining = 1024-temp_ptr;
 				temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%ld",ts64);
 				
@@ -794,7 +796,7 @@ int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int lim
 	if (key_ptr == 0)
 		return 0;
 	
-	out_ptr += snprintf(Message_out,limit_out,"$$");
+	out_ptr += snprintf(MessageOut,limit_out,"$$");
 	
 	//now order the items into the output string
 	
@@ -805,13 +807,13 @@ int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int lim
 			if (keys[j] == i){
 				copy_ptr = key_val[j];
 				while((out_ptr < limit_out-1) && (temp[copy_ptr])){
-					Message_out[out_ptr++] = temp[copy_ptr++];
+					MessageOut[out_ptr++] = temp[copy_ptr++];
 				}
-				Message_out[out_ptr++] = ',';
+				MessageOut[out_ptr++] = ',';
 			}
 		}
 	}
-	Message_out[out_ptr-1] = '*';
+	MessageOut[out_ptr-1] = '*';
 	
 	//add checksum to keep everything happy
 	
@@ -1233,7 +1235,7 @@ void DIO0_Interrupt(int Channel)
 			else if ( ((Message[1] & 0xF0) == 0x80) || (Message[1]  == 0xde))
 			{
 				unsigned char MessageOut[1024];
-				ProcessHabpackMessage(Message,MessageOut,1024);
+				ProcessHabpackMessage(Message,256,MessageOut,1024);
 				ProcessTelemetryMessage(Channel, MessageOut+1);
 				TestMessageForSMSAcknowledgement(Channel, MessageOut+1);
 			}
