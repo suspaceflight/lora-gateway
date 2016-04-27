@@ -679,13 +679,22 @@ static size_t file_writer(cmp_ctx_t *ctx, const void *data, size_t count) {
     //return fwrite(data, sizeof(uint8_t), count, (FILE *)ctx->buf);
 }
 
+void LogInt(int32_t in)
+{
+	char b[20] ;
+	int i;
+	snprintf(b,20," %ld ",in);
+	
+	LogMessage(b);
+	
+}
 int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int limit_out)
 {
 	
 	cmp_ctx_t cmp;
 	uint32_t map_size;
-	uint32_t array_size;
-	int i,j;
+	uint32_t array_size,array_size2;
+	int i,j,k;
 	
 	uint64_t tu64;
 	int64_t ts64;
@@ -694,14 +703,16 @@ int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int lim
 	//When converting habpack to $$uhkas, the habpack fields should be ordered.
 	//This stores the output prior to reordering
 	char temp[1024];
+	memset(temp,0,sizeof(char)*1024);
 	int temp_ptr = 0;
 	int temp_remaining;
-	
+	int jkt=0;
 	int out_ptr = 0;
 	
 	uint8_t keys[128];
 	uint16_t key_val[128];
 	uint8_t key_ptr = 0;
+	cmp_object_t item;
 	
 	cmp_init(&cmp, (void*)Message, file_reader, file_writer);
 
@@ -720,26 +731,30 @@ int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int lim
 		
 		switch(map_id){
 			case 0: //callsign
+				LogMessage("Reading callsign, ");
 				key_val[key_ptr] = temp_ptr;				
 				keys[key_ptr++] = 0;
 			
 				temp_remaining = 1024-temp_ptr;
 				if (!cmp_read_str(&cmp, &temp[temp_ptr], (uint32_t *)(&temp_remaining)))
 				    return 0;
+
 				while(temp[temp_ptr])
 					temp_ptr++;
 				temp_ptr++;
 				
 				break;
 			case 1: //count
+				
 				key_val[key_ptr] = temp_ptr;
 				keys[key_ptr++] = 1;
 				
 				if (!(cmp_read_uinteger(&cmp, &tu64)))
 					return 0;
 				temp_remaining = 1024-temp_ptr;
-				temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%lu",tu64);
-				
+				temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%lld\0",tu64);
+				temp_ptr++;
+
 				break;
 			case 2:
 				key_val[key_ptr] = temp_ptr;			
@@ -752,8 +767,9 @@ int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int lim
 				int mins = (tu64/60);
 				int secs = tu64-mins*60;
 				temp_remaining = 1024-temp_ptr;
-				temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%02d:%02d:%02d",hours,mins,secs);	
-							
+				temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%02d:%02d:%02d\0",hours,mins,secs);
+				temp_ptr++;
+
 				break;
 			case 3: //position
 				key_val[key_ptr] = temp_ptr;
@@ -766,20 +782,75 @@ int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int lim
 				if (!(cmp_read_sinteger(&cmp, &ts64)))
 					return 0;
 				temp_remaining = 1024-temp_ptr;
-				temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%ld,",ts64);									
+				temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%lld,",ts64);
 				
 				if (!(cmp_read_sinteger(&cmp, &ts64)))
 					return 0;
 				temp_remaining = 1024-temp_ptr;
-				temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%ld,",ts64);
+				temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%lld,",ts64);
 
 				if (!(cmp_read_sinteger(&cmp, &ts64)))
 					return 0;
 				temp_remaining = 1024-temp_ptr;
-				temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%ld",ts64);
-				
+				temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%lld",ts64);
+				temp_ptr++;
+
 				break;
 			default:
+				
+				if(!cmp_read_object(&cmp, &item))
+					return 0;
+				LogInt(item.type);
+				if (((item.type >= CMP_TYPE_UINT8) && (item.type <= CMP_TYPE_SINT64)) || (item.type == CMP_TYPE_POSITIVE_FIXNUM)){	
+					ts64 = item.as.s64;
+					LogInt(map_id); LogMessage(": ");
+					key_val[key_ptr] = temp_ptr;				
+					keys[key_ptr++] = map_id;			
+					temp_remaining = 1024-temp_ptr;
+					temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%lld",ts64);
+					temp_ptr++;
+					LogInt(ts64); LogMessage(", ");
+				}else if ((item.type == CMP_TYPE_FIXARRAY) || (item.type == CMP_TYPE_ARRAY16) || (item.type == CMP_TYPE_ARRAY32)){ 
+					array_size = item.as.array_size;
+					LogInt(map_id);LogMessage("("); LogInt(item.as.array_size); LogMessage("): ");
+					key_val[key_ptr] = temp_ptr;
+					keys[key_ptr++] = map_id;
+					
+					if(!cmp_read_object(&cmp, &item))
+						return 0;
+					LogInt(hb_buf_ptr);
+					for (j = 0; j < item.as.array_size; j++){
+						
+						if ((cmp_read_integer(&cmp, &ts64))){		
+							LogMessage("ar1:  ");						
+							temp_remaining = 1024-temp_ptr;
+							temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%lld,",ts64);
+							LogInt(ts64);
+						}	
+						//else if(!cmp_read_object(&cmp, &item))
+						//	return 0;
+							/*if (cmp_read_array(&cmp, &array_size2)){
+							for (k = 0; k < array_size; k++){
+								if ((cmp_read_uinteger(&cmp, &tu64))){		
+									LogMessage("ar2: ");							
+									temp_remaining = 1024-temp_ptr;
+									temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%lld,",tu64);
+									LogInt(tu64);
+								}
+								//else other data types
+							}							
+						}
+						//else process other types
+						*/
+					}
+					temp_ptr++;
+						
+				}
+				//else if(!cmp_read_object(&cmp, &item))
+				//	return 0;
+				//else process other types
+				
+				
 				/*if (item.isIntegerValue()){        							
 					//raw_string = raw_string + packetID + ",";
 					telemmap.put(new Integer(s.asIntegerValue().intValue()),
@@ -791,8 +862,10 @@ int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int lim
 				}*/
 				break;
 		}
-	}
 	
+		
+	}
+
 	if (key_ptr == 0)
 		return 0;
 	
@@ -1234,8 +1307,22 @@ void DIO0_Interrupt(int Channel)
 			}
 			else if ( ((Message[1] & 0xF0) == 0x80) || (Message[1]  == 0xde))
 			{
+				char l[300];
+				int i = 0;
+				int j = 0;
 				unsigned char MessageOut[1024];
-				ProcessHabpackMessage(Message,256,MessageOut,1024);
+				snprintf(l,30,"Habpack of length: %i\n",Bytes);
+				LogMessage(l);
+				
+				for (i = 0; i < Bytes; i++){
+					snprintf(l,6,"%02x ",Message[i]);
+					LogMessage(l);
+				}
+				LogMessage("\n");
+				
+				ProcessHabpackMessage(Message+1,256,MessageOut,1024);
+				LogMessage(MessageOut);
+				LogMessage("\n");
 				ProcessTelemetryMessage(Channel, MessageOut+1);
 				TestMessageForSMSAcknowledgement(Channel, MessageOut+1);
 			}
