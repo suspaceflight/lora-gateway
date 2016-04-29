@@ -713,7 +713,7 @@ static int64_t GetInt(cmp_object_t item)
 		return (int64_t)item.as.u64;
 	if (item.type == CMP_TYPE_SINT64)
 		return (int64_t)item.as.s64;
-	return (int64_t)item.as.u8;
+	return (int64_t)item.as.s8;
 }
 
 static bool IsInt (cmp_object_t item)
