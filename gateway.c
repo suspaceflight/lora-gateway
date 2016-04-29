@@ -149,6 +149,8 @@ struct TBinaryPacket
 
 const char *Modes[6] = {"Slow", "SSDV", "Repeater", "Turbo", "TurboX", "Calling"};
 
+uint16_t CRC16(unsigned char *ptr);
+
 void writeRegister(int Channel, uint8_t reg, uint8_t val)
 {
 	unsigned char data[2];
@@ -679,15 +681,49 @@ static size_t file_writer(cmp_ctx_t *ctx, const void *data, size_t count) {
     //return fwrite(data, sizeof(uint8_t), count, (FILE *)ctx->buf);
 }
 
-void LogInt(int32_t in)
+void LogInt(int64_t in)
 {
 	char b[20] ;
 	int i;
-	snprintf(b,20," %ld ",in);
+	snprintf(b,20," %lld ",in);
 	
 	LogMessage(b);
 	
 }
+
+
+static int64_t GetInt(cmp_object_t item)
+{
+	if (item.type == CMP_TYPE_UINT8)
+		return (int64_t)item.as.u8;
+	if (item.type == CMP_TYPE_SINT8)
+		return (int64_t)item.as.s8;
+	
+	if (item.type == CMP_TYPE_UINT16)
+		return (int64_t)item.as.u16;
+	if (item.type == CMP_TYPE_SINT16)
+		return (int64_t)item.as.s16;
+	
+	if (item.type == CMP_TYPE_UINT32)
+		return (int64_t)item.as.u32;
+	if (item.type == CMP_TYPE_SINT32)
+		return (int64_t)item.as.s32;
+	
+	if (item.type == CMP_TYPE_UINT64)
+		return (int64_t)item.as.u64;
+	if (item.type == CMP_TYPE_SINT64)
+		return (int64_t)item.as.s64;
+}
+
+static bool IsInt (cmp_object_t item)
+{
+	if (((item.type >= CMP_TYPE_UINT8) && (item.type <= CMP_TYPE_SINT64)) 
+		|| (item.type == CMP_TYPE_POSITIVE_FIXNUM))
+		return 1;
+	else
+		return 0;	
+}
+
 int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int limit_out)
 {
 	
@@ -729,9 +765,11 @@ int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int lim
 		if (!(cmp_read_uinteger(&cmp, &map_id)))
 			return 0;
 		
+		if (key_ptr >= 127)
+			return 0;
+		
 		switch(map_id){
 			case 0: //callsign
-				LogMessage("Reading callsign, ");
 				key_val[key_ptr] = temp_ptr;				
 				keys[key_ptr++] = 0;
 			
@@ -800,33 +838,42 @@ int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int lim
 				
 				if(!cmp_read_object(&cmp, &item))
 					return 0;
-				LogInt(item.type);
-				if (((item.type >= CMP_TYPE_UINT8) && (item.type <= CMP_TYPE_SINT64)) || (item.type == CMP_TYPE_POSITIVE_FIXNUM)){	
-					ts64 = item.as.s64;
-					LogInt(map_id); LogMessage(": ");
+
+				if (IsInt(item)){	
+					ts64 = GetInt(item);
 					key_val[key_ptr] = temp_ptr;				
 					keys[key_ptr++] = map_id;			
 					temp_remaining = 1024-temp_ptr;
 					temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%lld",ts64);
 					temp_ptr++;
-					LogInt(ts64); LogMessage(", ");
 				}else if ((item.type == CMP_TYPE_FIXARRAY) || (item.type == CMP_TYPE_ARRAY16) || (item.type == CMP_TYPE_ARRAY32)){ 
 					array_size = item.as.array_size;
-					LogInt(map_id);LogMessage("("); LogInt(item.as.array_size); LogMessage("): ");
 					key_val[key_ptr] = temp_ptr;
 					keys[key_ptr++] = map_id;
+
 					
-					if(!cmp_read_object(&cmp, &item))
-						return 0;
-					LogInt(hb_buf_ptr);
-					for (j = 0; j < item.as.array_size; j++){
-						
-						if ((cmp_read_integer(&cmp, &ts64))){		
-							LogMessage("ar1:  ");						
+					for (j = 0; j < array_size; j++){
+						if(!cmp_read_object(&cmp, &item))
+							return 0;
+					
+						if (IsInt(item)){	
+							ts64 = GetInt(item);						
 							temp_remaining = 1024-temp_ptr;
 							temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%lld,",ts64);
+							temp_ptr++;
 							LogInt(ts64);
-						}	
+						}else if ((item.type == CMP_TYPE_FIXARRAY) || (item.type == CMP_TYPE_ARRAY16) || (item.type == CMP_TYPE_ARRAY32)){ 
+							//dont actually print array of array, just step through
+							array_size2 = item.as.array_size;
+							while(array_size2){
+								if(!cmp_read_object(&cmp, &item))
+									return 0;
+								if ((item.type == CMP_TYPE_FIXARRAY) || (item.type == CMP_TYPE_ARRAY16) || (item.type == CMP_TYPE_ARRAY32))
+									array_size2 += item.as.array_size;
+								array_size2--;								
+							}
+						}
+						
 						//else if(!cmp_read_object(&cmp, &item))
 						//	return 0;
 							/*if (cmp_read_array(&cmp, &array_size2)){
@@ -865,6 +912,8 @@ int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int lim
 	
 		
 	}
+	
+	uint16_t crc;
 
 	if (key_ptr == 0)
 		return 0;
@@ -879,16 +928,22 @@ int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int lim
 		for (j=0; j < key_ptr; j++) {
 			if (keys[j] == i){
 				copy_ptr = key_val[j];
-				while((out_ptr < limit_out-1) && (temp[copy_ptr])){
-					MessageOut[out_ptr++] = temp[copy_ptr++];
+				if (temp[copy_ptr]){
+					while((out_ptr < limit_out-1) && (temp[copy_ptr])){
+						MessageOut[out_ptr++] = temp[copy_ptr++];
+					}
+					MessageOut[out_ptr++] = ',';
 				}
-				MessageOut[out_ptr++] = ',';
 			}
 		}
 	}
-	MessageOut[out_ptr-1] = '*';
+	out_ptr--;	
+	MessageOut[out_ptr] = '\0';
 	
 	//add checksum to keep everything happy
+	crc = CRC16(&MessageOut[2]);
+	snprintf(&MessageOut[out_ptr],limit_out-out_ptr-7,"*%04X\n",crc);
+	
 	
 }
 
@@ -1307,22 +1362,8 @@ void DIO0_Interrupt(int Channel)
 			}
 			else if ( ((Message[1] & 0xF0) == 0x80) || (Message[1]  == 0xde))
 			{
-				char l[300];
-				int i = 0;
-				int j = 0;
-				unsigned char MessageOut[1024];
-				snprintf(l,30,"Habpack of length: %i\n",Bytes);
-				LogMessage(l);
-				
-				for (i = 0; i < Bytes; i++){
-					snprintf(l,6,"%02x ",Message[i]);
-					LogMessage(l);
-				}
-				LogMessage("\n");
 				
 				ProcessHabpackMessage(Message+1,256,MessageOut,1024);
-				LogMessage(MessageOut);
-				LogMessage("\n");
 				ProcessTelemetryMessage(Channel, MessageOut+1);
 				TestMessageForSMSAcknowledgement(Channel, MessageOut+1);
 			}
