@@ -1362,7 +1362,7 @@ void DIO0_Interrupt(int Channel)
 			}
 			else if ( ((Message[1] & 0xF0) == 0x80) || (Message[1]  == 0xde))
 			{
-				
+				char MessageOut[1024];
 				ProcessHabpackMessage(Message+1,256,MessageOut,1024);
 				ProcessTelemetryMessage(Channel, MessageOut+1);
 				TestMessageForSMSAcknowledgement(Channel, MessageOut+1);
