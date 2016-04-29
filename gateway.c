@@ -725,7 +725,7 @@ static bool IsInt (cmp_object_t item)
 		return 0;	
 }
 
-int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int limit_out)
+int ProcessHabpackMessage(char *Message, int Message_len, int limit_in, char *MessageOut, int limit_out)
 {
 	
 	cmp_ctx_t cmp;
@@ -941,12 +941,18 @@ int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int lim
 			}
 		}
 	}
-	out_ptr--;	
+	//out_ptr--;	
+	//MessageOut[out_ptr] = '\0';
+	
+	size_t out_len;
+	
+	base64_encode(Message, Message_len, &out_len, &MessageOut[out_ptr]);
+	out_ptr += out_len;
 	MessageOut[out_ptr] = '\0';
 	
-	//add checksum to keep everything happy
+	//add checksum to keep everything happy 
 	crc = CRC16(&MessageOut[2]);
-	snprintf(&MessageOut[out_ptr],limit_out-out_ptr-7,"*%04X\n",crc);
+	snprintf(&MessageOut[out_ptr],limit_out-out_ptr-7,"*%04x\n",crc);
 	
 	
 }
@@ -1367,8 +1373,8 @@ void DIO0_Interrupt(int Channel)
 			else if ( ((Message[1] & 0xF0) == 0x80) || (Message[1]  == 0xde))
 			{
 				char MessageOut[1024];
-				ProcessHabpackMessage(Message+1,256,MessageOut,1024);
-				ProcessTelemetryMessage(Channel, MessageOut+1);
+				ProcessHabpackMessage(Message+1,Bytes,256,MessageOut,1024);
+				ProcessTelemetryMessage(Channel, MessageOut);
 				TestMessageForSMSAcknowledgement(Channel, MessageOut+1);
 			}
 			else if (Message[1] == 0x66)
@@ -1972,7 +1978,6 @@ uint16_t CRC16(unsigned char *ptr)
 {
     uint16_t CRC, xPolynomial;
 	int j;
-	
     CRC = 0xffff;           // Seed
     xPolynomial = 0x1021;
    
@@ -1987,7 +1992,6 @@ uint16_t CRC16(unsigned char *ptr)
                 CRC <<= 1;
         }
     }
-	 
 	return CRC;
 }
 
