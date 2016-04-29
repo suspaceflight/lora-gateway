@@ -713,6 +713,7 @@ static int64_t GetInt(cmp_object_t item)
 		return (int64_t)item.as.u64;
 	if (item.type == CMP_TYPE_SINT64)
 		return (int64_t)item.as.s64;
+	return (int64_t)item.as.u8;
 }
 
 static bool IsInt (cmp_object_t item)
@@ -840,7 +841,10 @@ int ProcessHabpackMessage(char *Message, int limit_in, char *MessageOut, int lim
 					return 0;
 
 				if (IsInt(item)){	
+					//LogInt(map_id); LogMessage("(");
+					//LogInt(item.type); LogMessage("): ");
 					ts64 = GetInt(item);
+					//LogInt(ts64);LogMessage("\n");
 					key_val[key_ptr] = temp_ptr;				
 					keys[key_ptr++] = map_id;			
 					temp_remaining = 1024-temp_ptr;
