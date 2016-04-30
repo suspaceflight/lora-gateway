@@ -851,6 +851,7 @@ int ProcessHabpackMessage(char *Message, int Message_len, int limit_in, char *Me
 					temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%lld",ts64);
 					temp_ptr++;
 				}else if ((item.type == CMP_TYPE_FIXARRAY) || (item.type == CMP_TYPE_ARRAY16) || (item.type == CMP_TYPE_ARRAY32)){ 
+					uint8_t first = 1;
 					array_size = item.as.array_size;
 					key_val[key_ptr] = temp_ptr;
 					keys[key_ptr++] = map_id;
@@ -863,9 +864,11 @@ int ProcessHabpackMessage(char *Message, int Message_len, int limit_in, char *Me
 						if (IsInt(item)){	
 							ts64 = GetInt(item);						
 							temp_remaining = 1024-temp_ptr;
-							temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%lld,",ts64);
-							temp_ptr++;
-							LogInt(ts64);
+							if (first)
+								temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,"%lld",ts64);
+							else
+								temp_ptr += snprintf(&temp[temp_ptr],temp_remaining,",%lld",ts64);
+							first = 0;
 						}else if ((item.type == CMP_TYPE_FIXARRAY) || (item.type == CMP_TYPE_ARRAY16) || (item.type == CMP_TYPE_ARRAY32)){ 
 							//dont actually print array of array, just step through
 							array_size2 = item.as.array_size;
